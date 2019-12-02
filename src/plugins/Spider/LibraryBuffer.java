@@ -39,20 +39,23 @@ public class LibraryBuffer implements FredPluginTalker {
 	private FreenetURI lastURI;
 	private boolean badURI;
 
-	private TreeMap<TermPageEntry, TermPageEntry> termPageBuffer = new TreeMap();
+	private TreeMap<TermPageEntry, TermPageEntry> termPageBuffer = new TreeMap<>();
 	// Garbage collection behaving perversely. Lets try moving stuff into instance members.
 	private Collection<TermPageEntry> pushing = null;
 
 	private int bufferUsageEstimate = 0;
 	private int bufferMax;
 
-	static final File SAVE_FILE = new File("spider.saved.data");
+	private static final File SAVE_FILE = new File("spider.saved.data");
 	
 	/** For resetPages */
 	private Spider spider;
 
 	synchronized void setBufferSize(int maxSize) {
-		if(maxSize <= 0) throw new IllegalArgumentException();
+		if (maxSize <= 0) {
+			throw new IllegalArgumentException();
+		}
+
 		bufferMax = maxSize;
 	}
 
@@ -67,16 +70,15 @@ public class LibraryBuffer implements FredPluginTalker {
 				}
 				pushing = termPageBuffer.values();
 				push = true;
-				termPageBuffer = new TreeMap();
+				termPageBuffer = new TreeMap<>();
 				bufferUsageEstimate = 0;
 			}
 		}
-		if(push) sendBuffer();
+		if (push) sendBuffer();
 	}
 	
 	/**
 	 * Increments the estimate by specified amount.
-	 * @param increment
 	 */
 	private synchronized void increaseEstimate(int increment) {
 		bufferUsageEstimate += increment;
@@ -85,7 +87,6 @@ public class LibraryBuffer implements FredPluginTalker {
 	public synchronized int bufferUsageEstimate() {
 		return bufferUsageEstimate;
 	}
-	
 
 	LibraryBuffer(PluginRespirator pr, Spider spider) {
 		this.pr = pr;
@@ -102,33 +103,25 @@ public class LibraryBuffer implements FredPluginTalker {
 	/**
 	 * Takes a TermPageEntry and either returns a TPE of the same term & page
 	 * from the buffer or adds the TPE to the buffer and returns it.
-	 *
-	 * @param newTPE
-	 * @return
 	 */
 	private synchronized TermPageEntry get(TermPageEntry newTPE) {
-		if(shutdown) {
-			while(true)
-				try {
-					wait();// Don't add anything more, don't allow the transaction to commit.
-					// FIXME throw something instead???
-				} catch (InterruptedException e) {
-					// Ignore
-				} 
+		if (shutdown) {
+			// Don't add anything more, don't allow the transaction to commit.
+			throw new RuntimeException("shutdown");
 		}
+
 		TermPageEntry exTPE = termPageBuffer.get(newTPE);
-		if(exTPE==null) {	// TPE is new
+		if(exTPE==null) { // TPE is new
 			increaseEstimate(newTPE.sizeEstimate());
 			termPageBuffer.put(newTPE, newTPE);
 			return newTPE;
-		} else
+		} else {
 			return exTPE;
+		}
 	}
 
 	/**
-	 * Set the title of the
-	 * @param termPageEntry
-	 * @param s
+	 * Set the title of the termPageEntry
 	 */
 	synchronized void setTitle(TermPageEntry termPageEntry, String s) {
 		get(termPageEntry).title = s;
@@ -140,28 +133,28 @@ public class LibraryBuffer implements FredPluginTalker {
 
 	/**
 	 * Puts a term position in the TermPageEntry and increments the bufferUsageEstimate
-	 * @param tp
-	 * @param position
 	 */
 	synchronized void addPos(TermPageEntry tp, int position) {
-		//Logger.normal(this, "length : "+bufferUsageEstimate+", adding to "+tp);
+		Logger.debug(this, "length : "+bufferUsageEstimate+", adding to "+tp);
 		get(tp).putPosition(position);
-		//Logger.normal(this, "length : "+bufferUsageEstimate+", increasing length "+tp);
+		Logger.debug(this, "length : "+bufferUsageEstimate+", increasing length "+tp);
 		increaseEstimate(4);
 	}
 
 	/**
 	 * Emptys the buffer into a bucket and sends it to the Library plugin with the command "pushBuffer"
 	 *
-	 * FIXME : I think there is something wrong with the way it writes to the bucket, I may be using the wrong kind of buffer
+	 * FIXME : I think there is something wrong with the way it writes to the bucket,
+	 *   I may be using the wrong kind of buffer
 	 */
 	private void sendBuffer() {
 		long tStart = System.currentTimeMillis();
 		try {
+			// TODO: bufferUsageEstimate == 0 after maybeSend() L71
 			Logger.normal(this, "Sending buffer of estimated size "+bufferUsageEstimate+" bytes to Library");
 			long totalPagesIndexed = spider.getRoot().getPageCount(Status.INDEXED);
-			Bucket bucket = pr.getNode().clientCore.tempBucketFactory.makeBucket(3000000);
-			writeToPush(totalPagesIndexed, bucket);
+			Bucket bucket = pr.getNode().clientCore.tempBucketFactory.makeBucket(3_000_000); // TODO: why 3m
+			writeToPush(totalPagesIndexed, bucket); // move `pushing` to bucket
 			innerSend(bucket);
 			Logger.normal(this, "Buffer successfully sent to Library, size = "+bucket.size());
 			// Not a separate transaction, commit with the index updates.
@@ -185,7 +178,7 @@ public class LibraryBuffer implements FredPluginTalker {
 		}
 	}
 	
-	private synchronized Bucket writeToPush(long totalPagesIndexed, Bucket bucket) throws IOException {
+	private synchronized void writeToPush(long totalPagesIndexed, Bucket bucket) throws IOException {
 		OutputStream os = bucket.getOutputStream();
 		SimpleFieldSet meta = new SimpleFieldSet(true); // Stored with data to make things easier.
 		String indexTitle = spider.getConfig().getIndexTitle();
@@ -205,31 +198,30 @@ public class LibraryBuffer implements FredPluginTalker {
 		pushing = null;
 		os.close();
 		bucket.setReadOnly();
-		return bucket;
 	}
 
 	private void innerSend(Bucket bucket) {
 		SimpleFieldSet sfs = new SimpleFieldSet(true);
 		sfs.putSingle("command", "pushBuffer");
-		PluginTalker libraryTalker;
 		try {
-			libraryTalker = pr.getPluginTalker(this, "plugins.Library.Main", "SpiderBuffer");
+			PluginTalker libraryTalker =
+					pr.getPluginTalker(this, "plugins.Library.Main", "SpiderBuffer");
 			libraryTalker.sendSyncInternalOnly(sfs, bucket);
 			bucket.free();
 		} catch (PluginNotFoundException e) {
 			Logger.error(this, "Couldn't connect buffer to Library", e);
 		}
-
 	}
 	
-	public long getTimeStalled() {
+	long getTimeStalled() {
 		return timeStalled;
 	}
 	
-	public long getTimeNotStalled() {
+	long getTimeNotStalled() {
 		return timeNotStalled;
 	}
 
+	@Override
 	public void onReply(String pluginname, String indentifier, SimpleFieldSet params, Bucket data) {
 		String reply = params.get("reply");
 		if("getSpiderURI".equals(reply)) {
@@ -243,7 +235,7 @@ public class LibraryBuffer implements FredPluginTalker {
 					}
 					return;
 				} catch (MalformedURLException e) {
-					Logger.error(this, "Got bogus URI: "+s, new Exception("error"));
+					Logger.error(this, "Got bogus URI: "+s, e);
 				}
 			}
 			synchronized(this) {
@@ -256,15 +248,17 @@ public class LibraryBuffer implements FredPluginTalker {
 
 	public void terminate() {
 		synchronized(this) {
-			if(shutdown) {
+			if (shutdown) {
 				Logger.error(this, "Shutdown called twice", new Exception("error"));
 				return;
 			}
+
 			shutdown = true;
 			pushing = termPageBuffer.values();
-			termPageBuffer = new TreeMap();
+			termPageBuffer = new TreeMap<>();
 			bufferUsageEstimate = 0;
 		}
+
 		System.out.println("Writing pending data to "+SAVE_FILE);
 		FileBucket bucket = new FileBucket(SAVE_FILE, false, false, false, false);
 		long totalPagesIndexed;
@@ -295,13 +289,14 @@ public class LibraryBuffer implements FredPluginTalker {
 		} catch (PluginNotFoundException e) {
 			Logger.error(this, "Couldn't connect buffer to Library", e);
 		}
+
 		synchronized(this) {
-			if(lastURI == null) {
-				if(badURI) return null;
+			if (lastURI == null) {
+				if (badURI) return null;
 				try {
-					wait(1000);
+					wait(1_000);
 				} catch (InterruptedException e) {
-					// Ignore.
+					Thread.currentThread().interrupt();
 				}
 			}
 			return lastURI;

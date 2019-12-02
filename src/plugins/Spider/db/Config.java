@@ -45,14 +45,16 @@ public class Config extends Persistent implements Cloneable {
 		beginWorkingPeriod = 23;
 		endWorkingPeriod = 7;
 
-		badlistedExtensions = new String[] { //
+		badlistedExtensions = new String[] {
 				".ico", ".bmp", ".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff", ".ani", ".raw", ".svg", // image
 				".zip", ".jar", ".gz", ".bz2", ".rar", ".sit", // archive
-		        ".7z", ".tar", ".arj", ".rpm", ".deb", //
-		        ".xpi", ".ace", ".cab", ".lza", ".lzh", //
+		        ".7z", ".tar", ".arj", ".rpm", ".deb", ".xpi", ".ace", ".cab", ".lza", ".lzh",
 		        ".exe", ".iso", ".bin", ".dll", ".nrg", ".dmg", ".drv", ".img", ".msi", ".nds", ".vcd", // binary
-		        ".mpg", ".ogg", ".ogv", ".mp3", ".avi", ".wv", ".swf", ".wmv", ".mkv", ".flac", ".ogm", ".divx", ".mpeg", ".rm", ".wma", ".asf", ".rmvb", ".mov", ".flv", ".mp4", ".m4v", ".wav", ".aac", ".cda", ".fla", ".m4a", ".midi", ".vob", // media
-		        ".css", ".sig", ".gml", ".df", ".cbr", ".gf", ".pdf", ".db", ".dbf", ".accdb", ".dat", ".docx", ".dwg", ".mdf", ".odg", ".odt", ".ods", ".pps", ".wdb", ".xls", ".xlsx" // other
+		        ".mpg", ".ogg", ".ogv", ".mp3", ".avi", ".wv", ".swf", ".wmv", ".mkv", ".flac", ".ogm", // media
+				".divx", ".mpeg", ".rm", ".wma", ".asf", ".rmvb", ".mov", ".flv", ".mp4", ".m4v", ".wav", ".aac",
+				".cda", ".fla", ".m4a", ".midi", ".vob",
+		        ".css", ".sig", ".gml", ".df", ".cbr", ".gf", ".pdf", ".db", ".dbf", ".accdb", ".dat", ".docx", // other
+				".dwg", ".mdf", ".odg", ".odt", ".ods", ".pps", ".wdb", ".xls", ".xlsx"
 		};
 		
 		badlistedKeywords = new String[] {}; // No excluded keywords by default.
@@ -131,7 +133,7 @@ public class Config extends Persistent implements Cloneable {
 
 	public synchronized int getMaxParallelRequests() {
 		int actualHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
-		Boolean isWorking = true;
+		boolean isWorking;
 
 		if(this.getBeginWorkingPeriod() < this.getEndWorkingPeriod()) {
 			// Midnight isn't in the interval.

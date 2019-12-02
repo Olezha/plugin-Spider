@@ -51,18 +51,18 @@ class ConfigPage implements WebPage {
 			config.setEndWorkingPeriod(v);
 		}
 		if (request.isPartSet("badListedExtensions")) {
-			String v = request.getPartAsString("badListedExtensions", 32768);
-			String[] v0 = v.split(",");
+			String[] badListedExtensions = request.getPartAsStringFailsafe("badListedExtensions", 32768)
+					.split(",");
 			boolean good = true;
-			for (int i = 0; i < v0.length; i++) {
-				v0[i] = v0[i].trim();
-				if (v0[i].length() == 0 || v0[i].charAt(0) != '.') {
+			for (int i = 0; i < badListedExtensions.length; i++) {
+				badListedExtensions[i] = badListedExtensions[i].trim();
+				if (badListedExtensions[i].length() == 0 || badListedExtensions[i].charAt(0) != '.') {
 					good = false;
 					break;
 				}
 			}
 			if (good) {
-				config.setBadlistedExtensions(v0);
+				config.setBadlistedExtensions(badListedExtensions);
 			}
 		}
 		if(request.isPartSet("badListedKeywords")) {

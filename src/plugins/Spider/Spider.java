@@ -22,9 +22,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.PriorityBlockingQueue;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -64,10 +62,8 @@ import freenet.pluginmanager.FredPluginVersioned;
 import freenet.pluginmanager.PluginRespirator;
 import freenet.support.Logger;
 import freenet.support.api.Bucket;
-import freenet.support.io.Closer;
 import freenet.support.io.NativeThread;
 import freenet.support.io.NullBucket;
-import freenet.support.io.ResumeFailedException;
 
 /**
  * Spider. Produces xml index for searching words. 
@@ -81,20 +77,15 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 		FredPluginVersioned, FredPluginRealVersioned, FredPluginL10n, USKCallback, RequestClient {
 
 	/** Document ID of fetching documents */
-	protected Map<Page, ClientGetter> runningFetch = Collections.synchronizedMap(new HashMap<Page, ClientGetter>());
+	private final Map<Page, ClientGetter> runningFetch = Collections.synchronizedMap(new HashMap<>());
 
-	/**
-	 * Lists the allowed mime types of the fetched page. 
-	 */
-	protected Set<String> allowedMIMETypes;
-
-	static int dbVersion = 45;
-	static int version = 52;
+	private static int dbVersion = 45;
+	private static int version = 52;
 
 	/** We use the standard http://127.0.0.1:8888/ for parsing HTML regardless of what the local
 	 * interface is actually configured to be. This will not affect the extracted FreenetURI's,
 	 * and if it did it would be a security risk. */
-	static final String ROOT_URI = "http://127.0.0.1:8888/";
+	private static final String ROOT_URI = "http://127.0.0.1:8888/";
 	
 	public static final String pluginName = "Spider " + version;
 
@@ -110,8 +101,7 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 	private ClientContext clientContext;
 	private boolean stopped = true;
 
-	private NodeClientCore core;
-	private PageMaker pageMaker;	
+	private PageMaker pageMaker;
 	private PluginRespirator pr;
 
 	private LibraryBuffer librarybuffer;
@@ -138,10 +128,6 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 		return getRoot().getConfig();
 	}
 
-	public boolean isGarbageCollecting() {
-		return garbageCollecting;
-	}
-
 	// Set config asynchronously
 	public void setConfig(Config config) {
 		getRoot().setConfig(config); // hack -- may cause race condition. but this is more user friendly
@@ -162,7 +148,7 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 		}
 		
 		for(String keyword : getRoot().getConfig().getBadlistedKeywords()) {
-			if(lowerCaseURI.indexOf(keyword.toLowerCase()) != -1) {
+			if(lowerCaseURI.contains(keyword.toLowerCase())) {
 				return; // Fascist keyword exclusion feature. Off by default!
 			}
 		}
@@ -172,9 +158,10 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 				uri = uri.setSuggestedEdition((-1) * uri.getSuggestedEdition());
 			}
 			try {
-				uri = ((USK.create(uri)).getSSK()).getURI();
-				(clientContext.uskManager).subscribe(USK.create(uri), this, false, this);
+				uri = USK.create(uri).getSSK().getURI();
+				clientContext.uskManager.subscribe(USK.create(uri), this, false, this);
 			} catch (Exception e) {
+				Logger.debug(this, e.getMessage());
 			}
 		}
 
@@ -190,7 +177,7 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 			db.endThreadTransaction();
 			dbTransactionEnded = true;
 		} catch (RuntimeException e) {
-			Logger.error(this, "Runtime Exception: " + e, e);		
+			Logger.error(this, "Runtime Exception: " + e, e);
 			throw e;
 		} finally {
 			if (!dbTransactionEnded) {
@@ -204,7 +191,7 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 	 * Start requests from the queue if less than 80% of the max requests are running until the max requests are running.
 	 */
 	public void startSomeRequests() {
-		ArrayList<ClientGetter> toStart = null;
+		ArrayList<ClientGetter> toStart;
 		synchronized (this) {
 			if (stopped) return;
 
@@ -215,7 +202,7 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 				if (running >= maxParallelRequests * 0.8) return;
 
 				// Prepare to start
-				toStart = new ArrayList<ClientGetter>(maxParallelRequests - running);
+				toStart = new ArrayList<>(maxParallelRequests - running);
 				db.beginThreadTransaction(Storage.COOPERATIVE_TRANSACTION);
 				getRoot().sharedLockPages(Status.QUEUED);
 				try {
@@ -260,7 +247,7 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 	private class ClientGetterCallback implements ClientGetCallback {
 		final Page page;
 
-		public ClientGetterCallback(Page page) {
+		ClientGetterCallback(Page page) {
 			this.page = page;
 		}
 
@@ -285,7 +272,7 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 		}
 
         @Override
-        public void onResume(ClientContext context) throws ResumeFailedException {
+        public void onResume(ClientContext context) {
         }
 
         @Override
@@ -295,10 +282,9 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 	}
 
 	private ClientGetter makeGetter(Page page) throws MalformedURLException {
-		ClientGetter getter = new ClientGetter(new ClientGetterCallback(page),
+		return new ClientGetter(new ClientGetterCallback(page),
 				new FreenetURI(page.getURI()), ctx,
 				getPollingPriorityProgress(), null);
-		return getter;
 	}
 
 	protected class OnFailureCallback implements Runnable {
@@ -360,9 +346,10 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 
 		public void run() {
 			try {
-				Thread.sleep(30000);
+				Thread.sleep(30_000);
 			} catch (InterruptedException e) {
-				// ignore
+				Thread.currentThread().interrupt();
+				return;
 			}
 			startSomeRequests();
 		}
@@ -392,29 +379,24 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 
 	// this is java.util.concurrent.Executor, not freenet.support.Executor
 	// always run with one thread --> more thread cause contention and slower!
-	public ThreadPoolExecutor callbackExecutor = new ThreadPoolExecutor( //
-			1, 1, 600, TimeUnit.SECONDS, //
-	        new PriorityBlockingQueue<Runnable>(5, new CallbackPrioritizer()), //
-	        new ThreadFactory() {
-		        public Thread newThread(Runnable r) {
-			        Thread t = new NativeThread(r, "Spider", NativeThread.NORM_PRIORITY - 1, true);
-			        t.setDaemon(true);
-			        t.setContextClassLoader(Spider.this.getClass().getClassLoader());
-			        return t;
-		        }
-	        });
+	public ThreadPoolExecutor callbackExecutor = new ThreadPoolExecutor(
+			1, 1, 600, TimeUnit.SECONDS,
+	        new PriorityBlockingQueue<>(5, new CallbackPrioritizer()),
+			runnable -> {
+				Thread t = new NativeThread(runnable, "Spider",
+						NativeThread.PriorityLevel.NORM_PRIORITY.value - 1, true);
+				t.setDaemon(true);
+				t.setContextClassLoader(Spider.this.getClass().getClassLoader());
+				return t;
+			});
 
 	/**
 	 * Processes the successfully fetched uri for further outlinks.
-	 * 
-	 * @param result
-	 * @param state
-	 * @param page
 	 */
 	// single threaded
-	protected void onSuccess(FetchResult result, ClientGetter state, Page page) {
+	private void onSuccess(FetchResult result, ClientGetter state, Page page) {
 		synchronized (this) {
-			if (stopped) return;    				
+			if (stopped) return;
 		}
 
 		lastRequestFinishedAt.set(currentTimeMillis());
@@ -433,28 +415,27 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 			 * identify trivially which page is being indexed. (we CANNOT rely on the base href
 			 * provided).
 			 */
+			// PageCallBack impl FoundURICallback: foundURI -> queueURI; onText -> Tokenize, Add to Library buffer
 			PageCallBack pageCallBack = new PageCallBack(page);
 			Logger.minor(this, "Successful: " + uri + " : " + page.getId());
 
-			InputStream filterInput = null;
-			OutputStream filterOutput = null;
 			try {
-				if (!"text/plain".equals(mimeType)) {
-					filterInput = data.getInputStream();
-					filterOutput = new NullBucket().getOutputStream();
-					ContentFilter.filter(filterInput, filterOutput, mimeType, uri.toURI(ROOT_URI), pageCallBack, 
-					        null, null);
-					filterInput.close();
-					filterOutput.close();
+				if ("text/plain".equals(mimeType)) {
+					try (BufferedReader br = new BufferedReader(new InputStreamReader(data.getInputStream()))) {
+						String line;
+						while ((line = br.readLine()) != null) {
+							pageCallBack.onText(line, mimeType, uri.toURI(ROOT_URI)); // process text line
+						}
+					}
 				} else {
-					BufferedReader br = new BufferedReader(new InputStreamReader(data.getInputStream()));
-					String line;
-					while((line = br.readLine())!=null) {
-						pageCallBack.onText(line, mimeType, uri.toURI(ROOT_URI));
+					try (InputStream filterInput = data.getInputStream();
+						 OutputStream filterOutput = new NullBucket().getOutputStream()) {
+						ContentFilter.filter(filterInput, filterOutput, mimeType, uri.toURI(ROOT_URI), pageCallBack,
+								null, null); // work with FoundURICallback
 					}
 				}
 				pageCallBack.finish();
-				librarybuffer.maybeSend();
+				librarybuffer.maybeSend(); // send if Library buffer ~full
 
 			} catch (UnsafeContentTypeException e) {
 				// wrong mime type
@@ -472,9 +453,6 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 				// we have lots of invalid html on net - just normal, not error
 				Logger.normal(this, "exception on content filter for " + page, e);
 				return;
-			} finally {
-				Closer.close(filterInput);
-				Closer.close(filterOutput);
 			}
 
 			page.setStatus(Status.NOT_PUSHED);
@@ -508,7 +486,7 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 		}
 	}
 
-	protected void onFailure(FetchException fe, ClientGetter state, Page page) {
+	private void onFailure(FetchException fe, ClientGetter state, final Page page) {
 		Logger.minor(this, "Failed: " + page + " : " + state, fe);
 
 		synchronized (this) {
@@ -546,9 +524,7 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 		}
 
 		startSomeRequests();
-	} 
-
-	private boolean garbageCollecting = false;
+	}
 
 	/**
 	 * Stop the plugin, pausing any writing which is happening
@@ -569,20 +545,28 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 		}
 		librarybuffer.terminate();
 
-		try { callbackExecutor.awaitTermination(30, TimeUnit.SECONDS); } catch (InterruptedException e) {}
-		try { db.close(); } catch (Exception e) {}
-		
-		webInterface.unload();
-		
-		Logger.normal(this, "Spider terminated");
+		try {
+			callbackExecutor.awaitTermination(30, TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		} finally {
+			try {
+				db.close();
+			} catch (Exception e) {
+				Logger.error(this, e.getMessage());
+			}
+
+			webInterface.unload();
+
+			Logger.normal(this, "Spider terminated");
+		}
 	}
 
 	/**
 	 * Start plugin
-	 * @param pr
 	 */
 	public synchronized void runPlugin(PluginRespirator pr) {
-		this.core = pr.getNode().clientCore;
+		NodeClientCore core = pr.getNode().clientCore;
 		this.pr = pr;
 		pageMaker = pr.getPageMaker();
 
@@ -592,11 +576,10 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 		ctx.maxNonSplitfileRetries = 1;
 		ctx.maxTempLength = 2 * 1024 * 1024;
 		ctx.maxOutputLength = 2 * 1024 * 1024;
-		allowedMIMETypes = new HashSet<String>();
-		allowedMIMETypes.add("text/html");
-		allowedMIMETypes.add("text/plain");
-		allowedMIMETypes.add("application/xhtml+xml");
-		ctx.allowedMIMETypes = new HashSet<String>(allowedMIMETypes);
+		ctx.allowedMIMETypes = new HashSet<>(); // Lists the allowed mime types of the fetched page.
+		ctx.allowedMIMETypes.add("text/html");
+		ctx.allowedMIMETypes.add("text/plain");
+		ctx.allowedMIMETypes.add("application/xhtml+xml");
 		clientContext = pr.getNode().clientCore.clientContext;
 
 		stopped = false;
@@ -608,8 +591,8 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 		webInterface.load();
 
 		FreenetURI[] initialURIs = core.getBookmarkURIs();
-		for (int i = 0; i < initialURIs.length; i++) {
-			queueURI(initialURIs[i], "bookmark", false);
+		for (FreenetURI urIs : initialURIs) {
+			queueURI(urIs, "bookmark", false);
 		}
 
 		librarybuffer = new LibraryBuffer(pr, this);
@@ -632,16 +615,14 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 		private String title;
 		private int totalWords;
 
-		protected final boolean logDEBUG = Logger.shouldLog(Logger.DEBUG, this); // per instance, allow changing on the fly
-
 		PageCallBack(Page page) {
+			Logger.debug(this, "Parsing "+page.getURI());
 			this.page = page;
 			try {
 				this.uri = new FreenetURI(page.getURI());
 			} catch (MalformedURLException ex) {
 				Logger.error(this, "Error creating uri from '"+page.getURI()+"'", ex);
 			}
-			//Logger.normal(this, "Parsing "+page.getURI());
 		}
 
 		@Override
@@ -651,28 +632,23 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 
 		/**
 		 * When a link is found in html
-		 * @param uri
-		 * @param inline
 		 */
 		@Override
 		public void foundURI(FreenetURI uri, boolean inline) {
 			if (stopped) throw new RuntimeException("plugin stopping");
-			if (logDEBUG) Logger.debug(this, "foundURI " + uri + " on " + page);
+			Logger.debug(this, "foundURI " + uri + " on " + page);
 			queueURI(uri, "Added from " + page.getURI(), false);
 		}
 
-		protected Integer lastPosition = null;
+		Integer lastPosition = null;
 
 		/**
 		 * When text is found
-		 * @param s
-		 * @param type
-		 * @param baseURI
 		 */
 		@Override
 		public void onText(String s, String type, URI baseURI){
 			if (stopped) throw new RuntimeException("plugin stopping");
-			if (logDEBUG) Logger.debug(this, "onText on " + page.getId() + " (" + baseURI + ")");
+			Logger.debug(this, "onText on " + page.getId() + " (" + baseURI + ")");
 
 			if ("title".equalsIgnoreCase(type) && (s != null) && (s.length() != 0) && (s.indexOf('\n') < 0)) {
 				/*
@@ -684,11 +660,11 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 			} else {
 				type = null;
 			}
-			// Tokenise. Do not use the pairs-of-CJK-chars option because we need
+			// Tokenize. Do not use the pairs-of-CJK-chars option because we need
 			// accurate word index numbers.
 			SearchTokenizer tok = new SearchTokenizer(s, false);
 
-			if(lastPosition == null) lastPosition = 1; 
+			if (lastPosition == null) lastPosition = 1;
 			int i = 0;
 			for (String word: tok) {
 				totalWords++;
@@ -720,16 +696,13 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 			}
 		}
 
-		HashMap<String, TermPageEntry> tpes = new HashMap();
+		HashMap<String, TermPageEntry> tpes = new HashMap<>();
 
 		/**
 		 * Add a word to the database for this page
-		 * @param word
-		 * @param position
-		 * @throws java.lang.Exception
 		 */
 		private void addWord(String word, int position) {
-			if (logDEBUG) Logger.debug(this, "addWord on " + page.getId() + " (" + word + "," + position + ")");
+			Logger.debug(this, "addWord on " + page.getId() + " (" + word + "," + position + ")");
 
 			// Skip word if it is a stop word
 			if (isStopWord(word)) return;
@@ -741,8 +714,6 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 
 		/**
 		 * Makes a TermPageEntry for this term
-		 * @param word
-		 * @return
 		 */
 		private TermPageEntry getEntry(String word) {
 			TermPageEntry tp = tpes.get(word);
@@ -777,7 +748,9 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 
     @Override
 	public short getPollingPriorityNormal() {
-		return (short) Math.min(RequestStarter.MINIMUM_FETCHABLE_PRIORITY_CLASS, getRoot().getConfig().getRequestPriority() + 1);
+		return (short) Math.min(
+				RequestStarter.MINIMUM_FETCHABLE_PRIORITY_CLASS,
+				getRoot().getConfig().getRequestPriority() + 1);
 	}
 
     @Override
@@ -824,8 +797,8 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 	}
 
     @Override
-	public void setLanguage(LANGUAGE newLanguage) {
-		language = newLanguage;
+	public void setLanguage(LANGUAGE language) {
+		this.language = language;
 	}
 
 	public PageMaker getPageMaker() {
@@ -834,7 +807,7 @@ public class Spider implements FredPlugin, FredPluginThreadless,
 
 	public List<Page> getRunningFetch() {
 		synchronized (runningFetch) {
-			return new ArrayList<Page>(runningFetch.keySet());
+			return new ArrayList<>(runningFetch.keySet());
 		}
 	}
 

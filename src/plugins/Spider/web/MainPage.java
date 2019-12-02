@@ -50,10 +50,11 @@ class MainPage implements WebPage {
 	 * @see plugins.Spider.WebPage#processPostRequest(freenet.support.api.HTTPRequest,
 	 * freenet.support.HTMLNode)
 	 */
+	@Override
 	public void processPostRequest(HTTPRequest request, HTMLNode contentNode) {
 		// Queue URI
-		String addURI = request.getPartAsString("addURI", 512);
-		if (addURI != null && addURI.length() != 0) {
+		String addURI = request.getPartAsStringFailsafe("addURI", 512);
+		if (addURI.length() != 0) {
 			try {
 				FreenetURI uri = new FreenetURI(addURI);
 				spider.queueURI(uri, "manually", true);
@@ -75,6 +76,7 @@ class MainPage implements WebPage {
 	 * @see plugins.Spider.WebPage#writeContent(freenet.support.api.HTTPRequest,
 	 * freenet.support.HTMLNode)
 	 */
+	@Override
 	public void writeContent(HTTPRequest request, HTMLNode contentNode) {
 		HTMLNode overviewTable = contentNode.addChild("table", "class", "column");
 		HTMLNode overviewTableRow = overviewTable.addChild("tr");
